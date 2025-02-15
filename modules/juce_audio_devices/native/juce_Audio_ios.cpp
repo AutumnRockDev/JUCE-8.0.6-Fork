@@ -346,7 +346,6 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
         // may be changed later.
         setAudioSessionCategory (AVAudioSessionCategoryPlayAndRecord);
 
-        setAudioSessionActive (true);
         updateHardwareInfo();
         channelData.reconfigure ({}, {});
         setAudioSessionActive (false);
@@ -547,30 +546,59 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
             return;
 
         JUCE_IOS_AUDIO_LOG ("Updating hardware info");
-
-        updateAvailableSampleRates();
-
-        // The sample rate and buffer size may have been affected by
-        // updateAvailableSampleRates(), so try restoring the last good
-        // sample rate
-        sampleRate = trySampleRate (sampleRate);
-        bufferSize = getBufferSize (sampleRate);
-
-        updateAvailableBufferSizes();
-
+        
+        // Avoid multiple calls to setAudioSessionActive by merging updateAvailableSampleRates, trySampleRate,
+        // getBufferSize, and updateAvailableBufferSizes into a single function. Instead of trying multiple values,
+        // we simply populate availableSampleRates, availableBufferSizes, sampleRate, and bufferSize with
+        // whatever the OS selects for us.
+        
+        AudioUnitRemovePropertyListenerWithUserData (audioUnit,
+                                                     kAudioUnitProperty_StreamFormat,
+                                                     dispatchAudioUnitPropertyChange,
+                                                     this);
+        
+        // Here, we just need to supply a somewhat reasonable value and let the OS decide the exact sample rate and buffer size it wants.
+        setAudioSessionActive(false);
+        auto session = [AVAudioSession sharedInstance];
+        JUCE_NSERROR_CHECK ([session setPreferredSampleRate: 48000 error: &error]);
+        JUCE_NSERROR_CHECK ([session setPreferredIOBufferDuration: 256.0/48000.0 error: &error]);
+        setAudioSessionActive(true);
+        
+        // Read the sampleRate and bufferSize that the OS ends up using
+        sampleRate = session.sampleRate;
+        bufferSize = roundToInt (sampleRate * [AVAudioSession sharedInstance].IOBufferDuration);
+        
+        // Set whatever the OS picks as the only available sample rate and buffer size
+        availableSampleRates.clear();
+        availableBufferSizes.clear();
+        availableSampleRates.add(sampleRate);
+        availableBufferSizes.add(bufferSize);
+        
+        AudioUnitAddPropertyListener (audioUnit,
+                                      kAudioUnitProperty_StreamFormat,
+                                      dispatchAudioUnitPropertyChange,
+                                      this);
+        
+        // Check the current stream format in case things have changed whilst we
+        // were going through the sample rates
+        handleStreamFormatChange();
+        
         if (deviceType != nullptr)
             deviceType->callDeviceChangeListeners();
     }
 
     void setTargetSampleRateAndBufferSize()
     {
-        JUCE_IOS_AUDIO_LOG ("Setting target sample rate: " << targetSampleRate);
-        sampleRate = trySampleRate (targetSampleRate);
-        JUCE_IOS_AUDIO_LOG ("Actual sample rate: " << sampleRate);
-
-        JUCE_IOS_AUDIO_LOG ("Setting target buffer size: " << targetBufferSize);
-        bufferSize = tryBufferSize (sampleRate, targetBufferSize);
-        JUCE_IOS_AUDIO_LOG ("Actual buffer size: " << bufferSize);
+        // Instead of calling trySampleRate and tryBufferSize seperately, we will merge them into 1 function.
+        // This way we can avoid calling setAudioSessionActive multiple times.
+        setAudioSessionActive(false);
+        auto session = [AVAudioSession sharedInstance];
+        JUCE_NSERROR_CHECK ([session setPreferredSampleRate: targetSampleRate error: &error]);
+        JUCE_NSERROR_CHECK ([session setPreferredIOBufferDuration: double(targetBufferSize)/targetSampleRate error: &error]);
+        setAudioSessionActive(true);
+        
+        sampleRate = session.sampleRate;
+        bufferSize = roundToInt (sampleRate * [AVAudioSession sharedInstance].IOBufferDuration);
     }
 
     String open (const BigInteger& inputChannelsWanted,

@@ -587,6 +587,14 @@ void AudioDeviceManager::insertDefaultDeviceNames (AudioDeviceSetup& setup) cons
         if (setup.inputDeviceName.isEmpty() && ! inputsToTest.isEmpty())
             setup.inputDeviceName = inputsToTest[0];
 
+        // Currently, when running on iOS, there is no need to check all possible input-output pairs.
+        // We will always end up with the default device names already in "setup" regardless.
+        // This way, we can avoid two more calls to iOSAudioIODevice's constructor, which prevents
+        // several setAudioSessionActive calls.
+        if (type->getTypeName() == iOSAudioDeviceName) {
+            return;
+        }
+        
         // We check all possible in-out pairs until the first validation pass. If no pair passes we
         // leave the setup unchanged.
         for (const auto& out : outputsToTest)
