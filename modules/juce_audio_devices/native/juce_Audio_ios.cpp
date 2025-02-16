@@ -348,6 +348,10 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
 
         updateHardwareInfo();
         channelData.reconfigure ({}, {});
+        
+        // Note: updateHardwareInfo will leave audio session to be on after it finishes.
+        // So we need to turn it off here if we want to preserve the original iOSAudioIODevice
+        // behaviour as much as possible.
         setAudioSessionActive (false);
 
         sessionHolder->activeDevices.add (this);
@@ -540,7 +544,9 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
         JUCE_IOS_AUDIO_LOG ("Sample rate after detecting available sample rates: " << sampleRate);
     }
 
-    void updateHardwareInfo (bool forceUpdate = false)
+    // Here we have modified updateHardwareInfo to also take in target sampleRate and bufferSize. This way we can
+    // avoid calling setTargetSampleRateAndBufferSize completely, and further reduces the time audio session is toggled.
+    void updateHardwareInfo (double targetSampleRate = 48000.0, int targetBufferSize = 256, bool forceUpdate = false)
     {
         if (! forceUpdate && ! hardwareInfoNeedsUpdating.compareAndSetBool (false, true))
             return;
@@ -560,8 +566,8 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
         // Here, we just need to supply a somewhat reasonable value and let the OS decide the exact sample rate and buffer size it wants.
         setAudioSessionActive(false);
         auto session = [AVAudioSession sharedInstance];
-        JUCE_NSERROR_CHECK ([session setPreferredSampleRate: 48000 error: &error]);
-        JUCE_NSERROR_CHECK ([session setPreferredIOBufferDuration: 256.0/48000.0 error: &error]);
+        JUCE_NSERROR_CHECK ([session setPreferredSampleRate: targetSampleRate error: &error]);
+        JUCE_NSERROR_CHECK ([session setPreferredIOBufferDuration: double(targetBufferSize)/targetSampleRate error: &error]);
         setAudioSessionActive(true);
         
         // Read the sampleRate and bufferSize that the OS ends up using
@@ -623,12 +629,12 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
                             << ", targetSampleRate: " << targetSampleRate
                             << ", targetBufferSize: " << targetBufferSize);
 
-        setAudioSessionActive (true);
         setAudioSessionCategory (requestedInputChannels > 0 ? AVAudioSessionCategoryPlayAndRecord
                                                             : AVAudioSessionCategoryPlayback);
         channelData.reconfigure (requestedInputChannels, requestedOutputChannels);
-        updateHardwareInfo (true);
-        setTargetSampleRateAndBufferSize();
+        // Note: updateHardwareInfo will leave audio session to be on after it finishes.
+        // So no need to call setAudioSessionActive(true) here.
+        updateHardwareInfo (targetSampleRate, targetBufferSize, true);
         fixAudioRouteIfSetToReceiver();
 
         isRunning = true;
@@ -1277,8 +1283,11 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
 
         }
 
-        updateHardwareInfo();
-        setTargetSampleRateAndBufferSize();
+        // Note: since we are no longer calling setTargetSampleRateAndBufferSize, and
+        // has delegate the setting of target sample rate and buffer size to updateHardwareInfo, we must
+        // ensure updateHardwareInfo is always called, hence we are passing true here to always force
+        // an update.
+        updateHardwareInfo(targetSampleRate, targetBufferSize, true);
 
         if (isRunning)
         {
