@@ -371,8 +371,12 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
 
         if (category == AVAudioSessionCategoryPlayAndRecord)
         {
+            // Note: Enabling AVAudioSessionCategoryOptionAllowBluetoothA2DP allows us to support the following setup
+            // "high definition bluetooth output + onboard microphone". For some reasons, AVAudioSessionCategoryOptionAllowBluetoothA2DP
+            // will not take effect unless AVAudioSessionCategoryOptionAllowBluetooth is disabled; hence, why we need the
+            // modification here.
             options |= AVAudioSessionCategoryOptionDefaultToSpeaker
-                     | AVAudioSessionCategoryOptionAllowBluetooth
+                     // | AVAudioSessionCategoryOptionAllowBluetooth
                      | AVAudioSessionCategoryOptionAllowAirPlay
                      | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
         }
