@@ -632,16 +632,18 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
 
         JUCE_IOS_AUDIO_LOG ("Updating hardware info");
 
-        updateAvailableSampleRates();
-
-        // The sample rate and buffer size may have been affected by
-        // updateAvailableSampleRates(), so try restoring the last good
-        // sample rate
         sampleRate = trySampleRate (sampleRate);
         bufferSize = getBufferSize (sampleRate);
-
-        updateAvailableBufferSizes();
-
+        
+        // Disable updateAvailableSampleRates and updateAvailableBufferSizes that were previously called in
+        // updateHardwareInfo. Instead, we will set whatever the OS picks as the only available sample rate
+        // and buffer size. For our use case, this is totatlly fine. Doing so speeds up load time and avoids
+        // the clicking noise bug that exists in iOS 18.
+        availableSampleRates.clear();
+        availableBufferSizes.clear();
+        availableSampleRates.add(sampleRate);
+        availableBufferSizes.add(bufferSize);
+        
         if (deviceType != nullptr)
             deviceType->callDeviceChangeListeners();
     }
